@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Transfer Simulator</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #666;
+    --border: #ddd;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --good: #16a34a;
+    --bad: #dc2626;
+    --warn: #d97706;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card: #1e2126;
+      --text: #eaeaea;
+      --muted: #9aa0a8;
+      --border: #33373d;
+      --accent: #3b82f6;
+      --accent-dark: #60a5fa;
+      --good: #4ade80;
+      --bad: #f87171;
+      --warn: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+    line-height: 1.4;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 0.95rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+    max-width: 900px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  label { font-size: 0.85rem; color: var(--muted); }
+  select, input[type=number] {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.95rem;
+    min-width: 160px;
+  }
+  button {
+    padding: 10px 18px;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-dark); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .stat .label { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .stat .value { font-size: 1.4rem; font-weight: 700; margin-top: 2px; }
+  .stat .value.good { color: var(--good); }
+  .stat .value.bad { color: var(--bad); }
+  .stat .value.warn { color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
+  tr.top-align td { vertical-align: top; }
+  .table-wrap { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  tr.missed td { color: var(--bad); }
+  td.arrival-good { color: var(--good); font-weight: 600; }
+  td.arrival-warn { color: var(--warn); font-weight: 600; }
+  td.arrival-bad { color: var(--bad); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+  .plan-summary { color: var(--muted); font-size: 0.88rem; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Bus Transfer Simulator</h1>
+<div class="subtitle">Simulate delays and transfer timing for the morning commute to school.</div>
+
+<div class="card">
+  <div class="controls">
+    <div class="field">
+      <label for="route">Route</label>
+      <select id="route"></select>
+    </div>
+    <div class="field">
+      <label for="numSims">Number of simulations</label>
+      <input type="number" id="numSims" min="1" max="1000" value="100">
+    </div>
+    <div class="field">
+      <button id="runBtn">Run simulations</button>
+    </div>
+  </div>
+  <div class="plan-summary" id="planSummary"></div>
+</div>
+
+<div class="card" id="resultsCard" style="display:none;">
+  <h2 style="margin-top:0; font-size:1.1rem;">Results by first-bus departure time</h2>
+  <div class="table-wrap">
+    <table id="resultsTable">
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ---------- Route data ----------
+// Times are stored as minutes since midnight for easy arithmetic.
+function hm(h, m) { return h * 60 + m; }
+function fmt(mins) {
+  // mins may be fractional; round to nearest minute for display
+  mins = Math.round(mins);
+  let h = Math.floor(mins / 60) % 24;
+  let m = mins % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+// leg2 can have multiple bus options serving the same transfer stop
+// (e.g. either the 28 or the 29, whichever comes first). Each option has
+// its own trips, exit stop, and walk time to school, since those can differ.
+const routes = {
+  "7_28_29": {
+    label: "To school: 7 → 28/28R/29",
+    walkToFirstStop: 10,
+    firstStopName: "Stanyan/Frederick",
+    transferStopName: "Lincoln Way/19th Ave",
+    transferWalk: 0,
+    leg1: {
+      busName: "7",
+      trips: [
+        { dep: hm(7, 11), arr: hm(7, 19) },
+        { dep: hm(7, 25), arr: hm(7, 33) },
+        { dep: hm(7, 38), arr: hm(7, 46) },
+        { dep: hm(7, 51), arr: hm(7, 59) },
+        { dep: hm(8, 4), arr: hm(8, 12) },
+      ]
+    },
+    leg2Options: [
+      {
+        busName: "29",
+        exitStopName: "Lake Merced/Middlefield Dr",
+        walkToSchool: 8,
+        trips: [
+          { dep: hm(7, 23), arr: hm(7, 40) },
+          { dep: hm(7, 32), arr: hm(7, 49) },
+          { dep: hm(7, 41), arr: hm(8, 0) },
+          { dep: hm(7, 49), arr: hm(8, 8) },
+          { dep: hm(7, 59), arr: hm(8, 18) },
+          { dep: hm(8, 8), arr: hm(8, 27) },
+        ]
+      },
+      {
+        busName: "28",
+        exitStopName: "19th Ave/Eucalyptus Dr",
+        walkToSchool: 10,
+        trips: [
+          { dep: hm(7, 20), arr: hm(7, 34) },
+          { dep: hm(7, 34), arr: hm(7, 48) },
+          { dep: hm(7, 47), arr: hm(8, 1) },
+          { dep: hm(7, 59), arr: hm(8, 13) },
+          { dep: hm(8, 12), arr: hm(8, 26) },
+          { dep: hm(8, 24), arr: hm(8, 38) },
+        ]
+      },
+      {
+        busName: "28R",
+        exitStopName: "19th Ave/Winston Dr",
+        walkToSchool: 15,
+        trips: [
+          { dep: hm(7, 26), arr: hm(7, 38) },
+          { dep: hm(7, 39), arr: hm(7, 51) },
+          { dep: hm(7, 52), arr: hm(8, 4) },
+          { dep: hm(8, 5), arr: hm(8, 17) },
+          { dep: hm(8, 18), arr: hm(8, 30) },
+        ]
+      }
+    ]
+  },
+  "37_K_M": {
+    label: "To school: 37 → K/M",
+    walkToFirstStop: 2,
+    firstStopName: "17th/Cole",
+    transferStopName: "14th/Church",
+    transferWalk: 2,
+    leg1: {
+      busName: "37",
+      trips: [
+        { dep: hm(7, 13), arr: hm(7, 22) },
+        { dep: hm(7, 43), arr: hm(7, 52) },
+        { dep: hm(8, 8), arr: hm(8, 21) },
+      ]
+    },
+    leg2Options: [
+      {
+        busName: "K",
+        exitStopName: "Junipero Serra Blvd/Ocean Ave",
+        walkToSchool: 10,
+        trips: [
+          { dep: hm(7, 17), arr: hm(7, 31) },
+          { dep: hm(7, 26), arr: hm(7, 40) },
+          { dep: hm(7, 35), arr: hm(7, 49) },
+          { dep: hm(7, 45), arr: hm(7, 59) },
+          { dep: hm(7, 55), arr: hm(8, 9) },
+          { dep: hm(8, 5), arr: hm(8, 19) },
+          { dep: hm(8, 15), arr: hm(8, 29) },
+          { dep: hm(8, 25), arr: hm(8, 39) },
+        ]
+      },
+      {
+        busName: "M",
+        exitStopName: "Right of Way/Eucalyptus Blvd",
+        walkToSchool: 10,
+        trips: [
+          { dep: hm(7, 23), arr: hm(7, 38) },
+          { dep: hm(7, 34), arr: hm(7, 49) },
+          { dep: hm(7, 45), arr: hm(8, 0) },
+          { dep: hm(7, 56), arr: hm(8, 11) },
+          { dep: hm(8, 7), arr: hm(8, 23) },
+          { dep: hm(8, 18), arr: hm(8, 34) },
+          { dep: hm(8, 29), arr: hm(8, 44) },
+        ]
+      }
+    ]
+  },
+  "N_28_28R": {
+    label: "To school: N → 28/28R",
+    walkToFirstStop: 7,
+    firstStopName: "Carl St & Cole St",
+    transferStopName: "Judah St & 19th Ave",
+    transferWalk: 2,
+    leg1: {
+      busName: "N",
+      trips: [
+        { dep: hm(7, 1), arr: hm(7, 12) },
+        { dep: hm(7, 11), arr: hm(7, 22) },
+        { dep: hm(7, 22), arr: hm(7, 33) },
+        { dep: hm(7, 32), arr: hm(7, 44) },
+        { dep: hm(7, 41), arr: hm(7, 53) },
+        { dep: hm(7, 52), arr: hm(8, 4) },
+        { dep: hm(8, 4), arr: hm(8, 16) },
+      ]
+    },
+    leg2Options: [
+      {
+        busName: "28",
+        exitStopName: "19th Ave/Eucalyptus Dr",
+        walkToSchool: 10,
+        trips: [
+          { dep: hm(7, 9), arr: hm(7, 20) },
+          { dep: hm(7, 22), arr: hm(7, 34) },
+          { dep: hm(7, 36), arr: hm(7, 48) },
+          { dep: hm(7, 49), arr: hm(8, 1) },
+          { dep: hm(8, 1), arr: hm(8, 13) },
+          { dep: hm(8, 14), arr: hm(8, 26) },
+          { dep: hm(8, 26), arr: hm(8, 38) },
+        ]
+      },
+      {
+        busName: "28R",
+        exitStopName: "19th Ave/Winston Dr",
+        walkToSchool: 15,
+        trips: [
+          { dep: hm(7, 14), arr: hm(7, 25) },
+          { dep: hm(7, 28), arr: hm(7, 38) },
+          { dep: hm(7, 41), arr: hm(7, 52) },
+          { dep: hm(7, 54), arr: hm(8, 5) },
+          { dep: hm(8, 7), arr: hm(8, 18) },
+          { dep: hm(8, 20), arr: hm(8, 31) },
+          { dep: hm(8, 33), arr: hm(8, 44) },
+        ]
+      }
+    ]
+  }
+};
+
+// ---------- Delay model ----------
+// Each bus leg gets independent random jitter: mostly a few minutes late,
+// occasionally on time or slightly early, rarely more delayed.
+// Box-Muller normal sample, mean 2 min late, sd 2.5 min, floored at -2 (can't be much early).
+function sampleDelay() {
+  let u1 = Math.random(), u2 = Math.random();
+  let z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  let delay = 2 + z * 2.5;
+  return Math.max(-2, delay);
+}
+
+// ---------- Simulation ----------
+function runSimulation(route, leg1TripIndex, n) {
+  const trip1 = route.leg1.trips[leg1TripIndex];
+
+  // Flatten all leg2 options into one list of candidate trips, tagged with
+  // which bus/exit/walk they belong to, so we can pick whichever comes first.
+  const allTrip2Candidates = [];
+  route.leg2Options.forEach(option => {
+    option.trips.forEach(trip => {
+      allTrip2Candidates.push({
+        busName: option.busName,
+        exitStopName: option.exitStopName,
+        walkToSchool: option.walkToSchool,
+        dep: trip.dep,
+        arr: trip.arr
+      });
+    });
+  });
+  allTrip2Candidates.sort((a, b) => a.dep - b.dep);
+
+  const results = [];
+  for (let i = 0; i < n; i++) {
+    const arr1Actual = trip1.arr + sampleDelay();
+    const arrivalAtTransferStop = arr1Actual + route.transferWalk;
+
+    const trip2 = allTrip2Candidates.find(t => t.dep >= arrivalAtTransferStop);
+    if (!trip2) {
+      results.push({
+        missed: true,
+        arr1Actual,
+        arrivalAtTransferStop
+      });
+      continue;
+    }
+
+    const waitAtTransfer = trip2.dep - arrivalAtTransferStop;
+    const arr2Actual = trip2.arr + sampleDelay();
+    const schoolArrival = arr2Actual + trip2.walkToSchool;
+
+    results.push({
+      missed: false,
+      arr1Actual,
+      trip2BusName: trip2.busName,
+      trip2Dep: trip2.dep,
+      waitAtTransfer,
+      arr2Actual,
+      schoolArrival
+    });
+  }
+  return results;
+}
+
+// ---------- UI wiring ----------
+const routeSelect = document.getElementById('route');
+const numSimsInput = document.getElementById('numSims');
+const runBtn = document.getElementById('runBtn');
+const planSummary = document.getElementById('planSummary');
+const resultsCard = document.getElementById('resultsCard');
+const tableBody = document.querySelector('#resultsTable tbody');
+
+function populateRoutes() {
+  for (const key in routes) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = routes[key].label;
+    routeSelect.appendChild(opt);
+  }
+  updatePlanSummary();
+}
+
+function updatePlanSummary() {
+  const route = routes[routeSelect.value];
+  const leg2Names = route.leg2Options.map(o => o.busName).join(' or ');
+  planSummary.textContent =
+    `Walk ${route.walkToFirstStop} min to ${route.firstStopName} → Bus ${route.leg1.busName} → ` +
+    `transfer at ${route.transferStopName} to whichever comes first, Bus ${leg2Names} → ` +
+    `exit and walk to school (walk time depends on which bus is caught). Simulated across every scheduled Bus ${route.leg1.busName} departure time.`;
+}
+
+const SCHOOL_START = hm(8, 40);
+// How many minutes before school starts counts as "comfortably" on time
+// (arriving after this, but still before school starts, is "barely" on time).
+// Change this single value to adjust both the stats and the color coding below.
+const COMFORTABLE_BUFFER_MINS = 15;
+const COMFORTABLE_ARRIVAL_TIME = SCHOOL_START - COMFORTABLE_BUFFER_MINS;
+
+function arrivalStatusClass(mins) {
+  const rounded = Math.round(mins);
+  if (rounded <= COMFORTABLE_ARRIVAL_TIME) return 'arrival-good';
+  if (rounded <= SCHOOL_START) return 'arrival-warn';
+  return 'arrival-bad';
+}
+
+// maps a school-arrival time to the stat-tile color class (good/warn/bad)
+function arrivalStatValueClass(mins) {
+  return arrivalStatusClass(mins).replace('arrival-', '');
+}
+
+function mean(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
+function median(arr) {
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function computeStats(route, results) {
+  const successes = results.filter(r => !r.missed);
+  const missedCount = results.length - successes.length;
+  const arrivals = successes.map(r => r.schoolArrival);
+  const pct = (count) => `${(100 * count / results.length).toFixed(0)}%`;
+
+  const stats = {
+    n: results.length,
+    missedCount,
+    missedPct: pct(missedCount),
+  };
+
+  if (successes.length > 0) {
+    const comfortablyOnTime = arrivals.filter(a => Math.round(a) <= COMFORTABLE_ARRIVAL_TIME).length;
+    const barelyOnTime = arrivals.filter(a => {
+      const rounded = Math.round(a);
+      return rounded > COMFORTABLE_ARRIVAL_TIME && rounded <= SCHOOL_START;
+    }).length;
+    const late = arrivals.filter(a => Math.round(a) > SCHOOL_START).length;
+
+    stats.meanArrival = mean(arrivals);
+    stats.medianArrival = median(arrivals);
+    stats.earliestArrival = Math.min(...arrivals);
+    stats.latestArrival = Math.max(...arrivals);
+    stats.meanWait = mean(successes.map(r => r.waitAtTransfer));
+    stats.comfortablyOnTimePct = pct(comfortablyOnTime);
+    stats.comfortablyOnTimeCount = comfortablyOnTime;
+    stats.barelyOnTimePct = pct(barelyOnTime);
+    stats.barelyOnTimeCount = barelyOnTime;
+    stats.latePct = pct(late);
+    stats.lateCount = late;
+
+    const busCounts = {};
+    route.leg2Options.forEach(o => { busCounts[o.busName] = 0; });
+    successes.forEach(r => { busCounts[r.trip2BusName] = (busCounts[r.trip2BusName] || 0) + 1; });
+    stats.busSplit = Object.entries(busCounts)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([bus, count]) => `${bus}: ${pct(count)}`)
+      .join('<br>');
+  }
+
+  return stats;
+}
+
+const STAT_ROWS = [
+  { label: `Comfortably on time (by ${fmt(COMFORTABLE_ARRIVAL_TIME)})`, render: s => (s.comfortablyOnTimePct == null || s.comfortablyOnTimeCount === 0) ? { text: '—' } : { text: s.comfortablyOnTimePct, cls: 'good' } },
+  { label: `Cutting it close (${fmt(COMFORTABLE_ARRIVAL_TIME + 1)} to ${fmt(SCHOOL_START)})`, render: s => (s.barelyOnTimePct == null || s.barelyOnTimeCount === 0) ? { text: '—' } : { text: s.barelyOnTimePct, cls: 'warn' } },
+  { label: `Late (after ${fmt(SCHOOL_START)})`, render: s => (s.latePct == null || s.lateCount === 0) ? { text: '—' } : { text: s.latePct, cls: 'bad' } },
+  { label: 'Earliest arrival', render: s => s.earliestArrival == null ? { text: '—' } : { text: fmt(s.earliestArrival), cls: arrivalStatValueClass(s.earliestArrival) } },
+  { label: 'Mean arrival at school', render: s => s.meanArrival == null ? { text: '—' } : { text: fmt(s.meanArrival), cls: arrivalStatValueClass(s.meanArrival) } },
+  { label: 'Median arrival at school', render: s => s.medianArrival == null ? { text: '—' } : { text: fmt(s.medianArrival), cls: arrivalStatValueClass(s.medianArrival) } },
+  { label: 'Latest arrival', render: s => s.latestArrival == null ? { text: '—' } : { text: fmt(s.latestArrival), cls: arrivalStatValueClass(s.latestArrival) } },
+  { label: 'First bus' },
+  { label: 'Transfer bus', topAlign: true, render: s => ({ text: s.busSplit || '—' }) },
+  { label: 'Mean transfer wait', render: s => s.meanWait == null ? { text: '—' } : { text: `${s.meanWait.toFixed(1)} min` } },
+];
+
+function renderResults(route, allStats) {
+  resultsCard.style.display = 'block';
+
+  tableBody.innerHTML = '';
+
+  const depTimeRow = document.createElement('tr');
+  depTimeRow.innerHTML = '<td>First bus departure time</td>' +
+    allStats.map(s => `<td>${fmt(s.trip.dep)}</td>`).join('');
+  tableBody.appendChild(depTimeRow);
+
+  STAT_ROWS.forEach(row => {
+    if (row.label === 'First bus') {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>First bus</td>` +
+        allStats.map(() => `<td>${route.leg1.busName}</td>`).join('');
+      tableBody.appendChild(tr);
+      return;
+    }
+    const tr = document.createElement('tr');
+    if (row.topAlign) tr.className = 'top-align';
+    let html = `<td>${row.label}</td>`;
+    allStats.forEach(s => {
+      const { text, cls } = row.render(s.stats);
+      html += `<td class="${cls ? 'arrival-' + cls : ''}">${text}</td>`;
+    });
+    tr.innerHTML = html;
+    tableBody.appendChild(tr);
+  });
+}
+
+routeSelect.addEventListener('change', updatePlanSummary);
+runBtn.addEventListener('click', () => {
+  const route = routes[routeSelect.value];
+  let n = parseInt(numSimsInput.value, 10) || 1;
+  n = Math.min(1000, Math.max(1, n));
+  numSimsInput.value = n;
+
+  const allStats = route.leg1.trips.map(trip1 => {
+    const idx = route.leg1.trips.indexOf(trip1);
+    const results = runSimulation(route, idx, n);
+    return { trip: trip1, stats: computeStats(route, results) };
+  });
+
+  renderResults(route, allStats);
+});
+
+populateRoutes();
+</script>
+
+</body>
+</html>
