@@ -123,13 +123,27 @@
     </div>
     <div class="field">
       <label for="numSims">Number of simulations</label>
-      <input type="number" id="numSims" min="1" max="1000" value="100">
+      <input type="number" id="numSims" min="1" max="10000" value="100">
     </div>
     <div class="field">
       <button id="runBtn">Run simulations</button>
     </div>
   </div>
   <div class="plan-summary" id="planSummary"></div>
+  <div class="table-wrap" style="margin-top: 14px;">
+    <table id="routeDetailsTable">
+      <thead>
+        <tr>
+          <th>Leg</th>
+          <th>Bus/Train</th>
+          <th>Board at</th>
+          <th>Exit at</th>
+          <th>Walk to next</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </div>
 
 <div class="card" id="resultsCard" style="display:none;">
@@ -161,7 +175,7 @@ function fmt(mins) {
 // its own trips, exit stop, and walk time to school, since those can differ.
 const routes = {
   "7_28_29": {
-    label: "To school: 7 → 28/28R/29",
+    label: "To school: 7 → 28/29",
     walkToFirstStop: 10,
     firstStopName: "Stanyan/Frederick",
     transferStopName: "Lincoln Way/19th Ave",
@@ -203,18 +217,6 @@ const routes = {
           { dep: hm(8, 24), arr: hm(8, 38) },
         ]
       },
-      {
-        busName: "28R",
-        exitStopName: "19th Ave/Winston Dr",
-        walkToSchool: 15,
-        trips: [
-          { dep: hm(7, 26), arr: hm(7, 38) },
-          { dep: hm(7, 39), arr: hm(7, 51) },
-          { dep: hm(7, 52), arr: hm(8, 4) },
-          { dep: hm(8, 5), arr: hm(8, 17) },
-          { dep: hm(8, 18), arr: hm(8, 30) },
-        ]
-      }
     ]
   },
   "37_K_M": {
@@ -311,6 +313,35 @@ const routes = {
         ]
       }
     ]
+  },
+  "43_23": {
+    label: "To school: 43 → 23",
+    walkToFirstStop: 6,
+    firstStopName: "Shrader/Parnassus",
+    transferStopName: "Plymouth Ave/Monterey Blvd",
+    transferWalk: 0,
+    leg1: {
+      busName: "43",
+      trips: [
+        { dep: hm(7, 12), arr: hm(7, 30) },
+        { dep: hm(7, 37), arr: hm(7, 56) },
+        { dep: hm(7, 49), arr: hm(8, 9) },
+        { dep: hm(8, 13), arr: hm(8, 33) },
+      ]
+    },
+    leg2Options: [
+      {
+        busName: "23",
+        exitStopName: "Sloat Blvd/Vale Ave",
+        walkToSchool: 6,
+        trips: [
+          { dep: hm(7, 18), arr: hm(7, 26) },
+          { dep: hm(7, 39), arr: hm(7, 47) },
+          { dep: hm(8, 2), arr: hm(8, 10) },
+          { dep: hm(8, 23), arr: hm(8, 31) },
+        ]
+      }
+    ]
   }
 };
 
@@ -402,6 +433,35 @@ function updatePlanSummary() {
     `Walk ${route.walkToFirstStop} min to ${route.firstStopName} → Bus ${route.leg1.busName} → ` +
     `transfer at ${route.transferStopName} to whichever comes first, Bus ${leg2Names} → ` +
     `exit and walk to school (walk time depends on which bus is caught). Simulated across every scheduled Bus ${route.leg1.busName} departure time.`;
+
+  renderRouteDetailsTable(route);
+}
+
+function renderRouteDetailsTable(route) {
+  const tbody = document.querySelector('#routeDetailsTable tbody');
+  tbody.innerHTML = '';
+
+  const firstLegRow = document.createElement('tr');
+  firstLegRow.innerHTML = `
+    <td>1</td>
+    <td>${route.leg1.busName}</td>
+    <td>${route.firstStopName} <span style="color:var(--muted);">(${route.walkToFirstStop} min walk from home)</span></td>
+    <td>${route.transferStopName}</td>
+    <td>${route.transferWalk} min</td>
+  `;
+  tbody.appendChild(firstLegRow);
+
+  route.leg2Options.forEach(option => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>2 (option)</td>
+      <td>${option.busName}</td>
+      <td>${route.transferStopName}</td>
+      <td>${option.exitStopName}</td>
+      <td>${option.walkToSchool} min to school</td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
 const SCHOOL_START = hm(8, 40);
@@ -521,7 +581,7 @@ routeSelect.addEventListener('change', updatePlanSummary);
 runBtn.addEventListener('click', () => {
   const route = routes[routeSelect.value];
   let n = parseInt(numSimsInput.value, 10) || 1;
-  n = Math.min(1000, Math.max(1, n));
+  n = Math.min(10000, Math.max(1, n));
   numSimsInput.value = n;
 
   const allStats = route.leg1.trips.map(trip1 => {
